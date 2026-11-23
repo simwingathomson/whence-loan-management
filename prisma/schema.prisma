@@ -1,0 +1,180 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum LoanStatus {
+  ACTIVE
+  COMPLETED
+  DEFAULTED
+  WRITTEN_OFF
+}
+
+enum InstallmentStatus {
+  PENDING
+  PARTIAL
+  PAID
+  OVERDUE
+}
+
+enum PaymentStatus {
+  POSTED
+  REVERSED
+}
+
+model District {
+  id        String      @id @default(cuid())
+  name      String      @unique
+  agents    LoanAgent[]
+  clients   Client[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+}
+
+model LoanAgent {
+  id         String   @id @default(cuid())
+  code       String   @unique
+  name       String
+  phone      String?  @unique
+  districtId String
+  district   District @relation(fields: [districtId], references: [id], onDelete: Restrict)
+  clients    Client[]
+  loans      Loan[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([districtId])
+}
+
+model Client {
+  id            String         @id @default(cuid())
+  clientNumber  String         @unique
+  firstName     String
+  lastName      String
+  phone         String?        @unique
+  nationalId    String?        @unique
+  address       String?
+  districtId    String
+  agentId       String?
+  district      District       @relation(fields: [districtId], references: [id], onDelete: Restrict)
+  agent         LoanAgent?     @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  loans         Loan[]
+  notifications Notification[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([districtId, agentId])
+}
+
+model Loan {
+  id                 String                 @id @default(cuid())
+  loanNumber         String                 @unique
+  clientId           String
+  agentId            String?
+  principal          Decimal                @db.Decimal(14, 2)
+  interestRate       Decimal                @db.Decimal(7, 4)
+  totalDue           Decimal                @db.Decimal(14, 2)
+  outstandingBalance Decimal                @db.Decimal(14, 2)
+  issuedAt           DateTime
+  dueAt              DateTime
+  status             LoanStatus             @default(ACTIVE)
+  client             Client                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  agent              LoanAgent?             @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  installments       RepaymentInstallment[]
+  payments           Payment[]
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  @@index([clientId, status])
+  @@index([agentId, status])
+  @@index([dueAt, status])
+}
+
+model RepaymentInstallment {
+  id          String              @id @default(cuid())
+  loanId      String
+  sequence    Int
+  dueDate     DateTime
+  amountDue   Decimal             @db.Decimal(14, 2)
+  amountPaid  Decimal             @default(0) @db.Decimal(14, 2)
+  balance     Decimal             @db.Decimal(14, 2)
+  status      InstallmentStatus   @default(PENDING)
+  loan        Loan                @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  allocations PaymentAllocation[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@unique([loanId, sequence])
+  @@index([loanId, dueDate])
+  @@index([dueDate, status])
+}
+
+model Payment {
+  id             String              @id @default(cuid())
+  reference      String              @unique
+  loanId         String
+  amount         Decimal             @db.Decimal(14, 2)
+  paidAt         DateTime
+  method         String
+  status         PaymentStatus       @default(POSTED)
+  reversedAt     DateTime?
+  reversalReason String?
+  loan           Loan                @relation(fields: [loanId], references: [id], onDelete: Restrict)
+  allocations    PaymentAllocation[]
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([loanId, status, paidAt])
+}
+
+model PaymentAllocation {
+  id            String               @id @default(cuid())
+  paymentId     String
+  installmentId String
+  amount        Decimal              @db.Decimal(14, 2)
+  payment       Payment              @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  installment   RepaymentInstallment @relation(fields: [installmentId], references: [id], onDelete: Restrict)
+  createdAt     DateTime             @default(now())
+
+  @@unique([paymentId, installmentId])
+  @@index([installmentId])
+}
+
+model Notification {
+  id           String    @id @default(cuid())
+  clientId     String?
+  type         String
+  message      String
+  scheduledFor DateTime
+  sentAt       DateTime?
+  client       Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdAt    DateTime  @default(now())
+
+  @@index([clientId, scheduledFor])
+  @@index([scheduledFor, sentAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String
+  action     String
+  before     Json?
+  after      Json?
+  occurredAt DateTime @default(now())
+
+  @@index([entityType, entityId, occurredAt])
+}
+
+model CompanySettings {
+  id               String   @id @default("default")
+  companyName      String
+  currency         String   @default("ZMW")
+  notificationHour Int      @default(8)
+  updatedAt        DateTime @updatedAt
+}
